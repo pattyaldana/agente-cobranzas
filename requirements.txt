@@ -1,0 +1,21 @@
+# --- Agente: LangChain v1 + LangGraph (memoria en Postgres) ---
+langchain>=1.0,<2
+langchain-openai>=1.0,<2
+langgraph>=1.0,<2
+langgraph-checkpoint-postgres>=3.0,<4
+psycopg[binary,pool]>=3.2,<4
+
+# --- RAG: LangChain + Elasticsearch (el servidor es 8.x: el cliente debe ser 8.x) ---
+langchain-elasticsearch>=1.0,<2
+elasticsearch>=8.16,<9
+langchain-text-splitters>=1.0,<2
+pyyaml>=6
+
+# --- API y interfaz ---
+fastapi>=0.115
+uvicorn>=0.30
+gradio>=6.0,<7
+
+# --- Utilidades ---
+python-dotenv>=1.0
+tzdata

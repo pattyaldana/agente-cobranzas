@@ -1,0 +1,26 @@
+[
+  {
+    "id": "cliente-001",
+    "nombre": "Cliente 1 · compromiso de pago",
+    "dni": "10234567",
+    "escenario": "Consulta su deuda y el detalle del recibo, y registra un compromiso de pago."
+  },
+  {
+    "id": "cliente-002",
+    "nombre": "Cliente 2 · no puede pagar",
+    "dni": "20345678",
+    "escenario": "Rechaza comprometerse a pagar; el agente pregunta el motivo y lo registra como gestión de cobranza."
+  },
+  {
+    "id": "cliente-003",
+    "nombre": "Cliente 3 · dudas de facturación y financiamiento",
+    "dni": "44556677",
+    "escenario": "Consulta su deuda y luego hace preguntas conceptuales (cuotas, ciclo de facturación, medios de pago): el agente responde con RAG."
+  },
+  {
+    "id": "cliente-004",
+    "nombre": "Cliente 4 · DNI inexistente",
+    "dni": "12345678",
+    "escenario": "El documento no tiene deuda ni existe en la base: el agente maneja el error y ofrece derivar a un asesor."
+  }
+]

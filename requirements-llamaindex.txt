@@ -1,0 +1,6 @@
+# Solo si usas RAG_BACKEND=llamaindex. Se instala ADEMÁS de requirements.txt:
+#   pip install -r requirements.txt -r requirements-llamaindex.txt
+# Para desplegar con LlamaIndex, pega estas líneas al final de requirements.txt.
+llama-index-core>=0.14,<0.15
+llama-index-vector-stores-elasticsearch>=0.7,<0.8
+llama-index-embeddings-openai>=0.7,<0.8
