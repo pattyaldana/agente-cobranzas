@@ -244,3 +244,68 @@ def test_ready_ok_y_con_fallo(monkeypatch):
 def test_la_interfaz_se_sirve_en_la_raiz():
     r = cliente_http.get("/")
     assert r.status_code == 200 and "gradio" in r.text.lower()
+
+
+# --- vista de administrador ------------------------------------------------------------
+def _conexion_admin(columnas, filas, capturar):
+    Col = namedtuple("Col", "name")
+
+    class Cursor:
+        description = [Col(c) for c in columnas]
+
+        def execute(self, sql, params=None):
+            capturar.append((sql, params))
+
+        def fetchall(self):
+            return filas
+
+    class Conexion:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def get_connection():
+        yield Conexion()
+
+    return get_connection
+
+
+def test_admin_consulta_con_parametros_y_formato(monkeypatch):
+    from decimal import Decimal
+
+    from app import admin
+
+    capturado = []
+    filas = [("DNI", "10234567", None, date(2026, 10, 1), Decimal("99.8"), datetime(2026, 10, 2, 9, 30))]
+    monkeypatch.setattr(
+        "app.admin.get_connection",
+        _conexion_admin(["tipo_documento", "nro_documento", "nombre", "vencimiento", "saldo", "fecha_gestion"], filas, capturado),
+    )
+    encabezados, datos = admin.compromisos_pago(" 1023 ")
+    assert encabezados == ["Tipo doc.", "DNI", "Nombre", "Vencimiento", "Saldo (S/)", "Fecha de gestión"]
+    assert datos == [["DNI", "10234567", "", "2026-10-01", "99.80", "2026-10-02 09:30"]]
+    sql, params = capturado[0]
+    assert params == {"dni": "1023", "limite": admin.LIMITE_FILAS}
+    assert "1023" not in sql  # el DNI viaja como parámetro, nunca dentro del SQL
+
+
+def test_admin_clave(monkeypatch):
+    from app import admin
+
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    assert not admin.admin_habilitado() and not admin.clave_admin_valida("")
+    monkeypatch.setenv("ADMIN_PASSWORD", "ñandú-123")
+    assert admin.admin_habilitado()
+    assert admin.clave_admin_valida("ñandú-123")
+    assert not admin.clave_admin_valida("otra") and not admin.clave_admin_valida(None)
+
+
+def test_admin_consulta_exige_autenticacion(monkeypatch):
+    from app import ui
+
+    def no_debe_llamarse(dni):
+        raise AssertionError("consultó sin autenticar")
+
+    monkeypatch.setattr("app.ui.admin.compromisos_pago", no_debe_llamarse)
+    monkeypatch.setattr("app.ui.admin.motivos_no_pago", no_debe_llamarse)
+    assert len(ui.consultar_admin("", False)) == 4

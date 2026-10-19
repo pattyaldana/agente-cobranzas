@@ -55,7 +55,8 @@ Python 3.12 · LangChain 1.x y LangGraph · OpenAI (`gpt-4o`, embeddings `text-e
 agente-cobranzas/
 ├── app/
 │   ├── main.py            # FastAPI + Gradio montado en "/"
-│   ├── ui.py              # interfaz de chat
+│   ├── ui.py              # interfaz: vista de cliente (chat) y vista de administrador
+│   ├── admin.py           # consultas de compromisos de pago y motivos de no pago + clave
 │   ├── agent.py           # create_agent, memoria, chat()/historial()/reiniciar()
 │   ├── prompts.py         # prompt del sistema
 │   ├── config.py          # variables de entorno, validación de IDs, hora de Lima
@@ -136,10 +137,11 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 printf '%s' 'TU_API_KEY_OPENAI'  | gcloud secrets create openai-api-key --data-file=-
 printf '%s' 'TU_PASSWORD_PG'     | gcloud secrets create pg-password    --data-file=-
 printf '%s' 'TU_PASSWORD_ES'     | gcloud secrets create es-password    --data-file=-
+printf '%s' 'CLAVE_DEL_ADMIN'    | gcloud secrets create admin-password --data-file=-
 
 # 3) Permisos para la cuenta con la que corre Cloud Run
 SA="$(gcloud projects describe $PROYECTO --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
-for S in openai-api-key pg-password es-password; do
+for S in openai-api-key pg-password es-password admin-password; do
   gcloud secrets add-iam-policy-binding $S --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor
 done
 gcloud projects add-iam-policy-binding $PROYECTO --member="serviceAccount:$SA" --role=roles/cloudsql.client
@@ -153,7 +155,7 @@ gcloud run deploy $SERVICIO --source . --region $REGION \
   --add-cloudsql-instances $INSTANCIA \
   --network default --subnet default --vpc-egress private-ranges-only \
   --set-env-vars "PG_HOST=/cloudsql/$INSTANCIA,PG_DB=TU_DB,PG_USER=TU_USUARIO,ES_URL=http://IP_INTERNA_VM:9200,ES_USER=elastic,RAG_BACKEND=langchain,OPENAI_MODEL=gpt-4o" \
-  --set-secrets "OPENAI_API_KEY=openai-api-key:latest,PG_PASSWORD=pg-password:latest,ES_PASSWORD=es-password:latest"
+  --set-secrets "OPENAI_API_KEY=openai-api-key:latest,PG_PASSWORD=pg-password:latest,ES_PASSWORD=es-password:latest,ADMIN_PASSWORD=admin-password:latest"
 ```
 
 Al terminar, `gcloud` imprime la URL del servicio (`https://agente-cobranzas-xxxx.a.run.app`).
@@ -189,12 +191,14 @@ Al terminar, `gcloud` imprime la URL del servicio (`https://agente-cobranzas-xxx
 | `PG_PORT`, `PG_SSLMODE` | no | Por defecto `5432` y `require` |
 | `ES_URL`, `ES_PASSWORD` | sí | Elasticsearch (`http://host:9200`) |
 | `ES_USER`, `ES_INDEX` | no | Por defecto `elastic` y el índice de cada backend |
+| `ADMIN_PASSWORD` | no | Clave de la vista de administrador. Si falta, esa vista queda desactivada |
 | `RAG_BACKEND` | no | `langchain` (por defecto) o `llamaindex` |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT` | no | Trazas en LangSmith |
 | `APP_TZ`, `CORS_ORIGINS` | no | Zona horaria (`America/Lima`) y orígenes permitidos para CORS |
 
 ## 10. Limitaciones y seguridad
 
+- **Vista de administrador:** muestra nombres, DNI, compromisos de pago y motivos de no pago (consultas de solo lectura, máximo 500 filas, DNI como parámetro SQL). Está protegida por una clave única (`ADMIN_PASSWORD`, guardada en Secret Manager); es suficiente para la demo, pero un sistema real necesitaría usuarios, roles y registro de accesos.
 - **Identificación por DNI dicho en el chat:** es suficiente para la demo, pero un sistema real debe autenticar al cliente antes de mostrarle datos de deuda.
 - **La URL pública consume tu cuota de OpenAI y puede escribir en tu base** (compromisos y gestiones). No la compartas fuera de la evaluación, pon un límite de gasto en OpenAI y da de baja el servicio al terminar.
 - Las reglas de financiamiento de la base de conocimiento (cuotas, montos) son valores de ejemplo, no datos oficiales.

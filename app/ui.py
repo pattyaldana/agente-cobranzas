@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 
 import gradio as gr  # noqa: E402  (después de fijar la variable de arriba)
 
-from app import agent  # noqa: E402
+from app import admin, agent  # noqa: E402
 from app.config import ARCHIVO_CLIENTES_DEMO, validar_id_cliente  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ TEMA = gr.themes.Soft(primary_hue="indigo", neutral_hue="slate")
 CSS = """
 #titulo h1 { margin-bottom: 0.2rem; }
 #panel-cliente { padding-right: 8px; }
+.fila-vista { justify-content: flex-end; }
 """
 
 
@@ -103,6 +105,62 @@ def reiniciar_memoria(cliente_id: str):
         return gr.skip()
 
 
+# --- vista de administrador ---------------------------------------------------------
+def _tabla(consulta, dni: str):
+    """Devuelve (texto del contador, tabla) para un Dataframe."""
+    encabezados, filas = consulta(dni)
+    filtro = f" para el DNI «{dni.strip()}»" if (dni or "").strip() else ""
+    if len(filas) >= admin.LIMITE_FILAS:
+        conteo = f"Se muestran los primeros {admin.LIMITE_FILAS} registros{filtro}. Usa el buscador para acotar."
+    else:
+        conteo = f"**{len(filas)}** registro(s){filtro}."
+    return conteo, {"headers": encabezados, "data": filas}
+
+
+def ir_a_admin():
+    return gr.update(visible=False), gr.update(visible=True)
+
+
+def volver_a_cliente():
+    """Vuelve a la vista de cliente y cierra la sesión de administrador."""
+    return (
+        gr.update(visible=True),  # vista_cliente
+        gr.update(visible=False),  # vista_admin
+        False,  # autenticado
+        gr.update(visible=True),  # login
+        gr.update(visible=False),  # panel_admin
+        "",  # clave
+        "",  # mensaje_login
+    )
+
+
+def entrar_admin(clave: str):
+    if not admin.admin_habilitado():
+        return False, gr.skip(), gr.skip(), "⚠️ La vista de administrador está desactivada: falta la variable ADMIN_PASSWORD."
+    if not admin.clave_admin_valida(clave):
+        time.sleep(1)  # frena los intentos de adivinar la clave
+        return False, gr.skip(), gr.skip(), "❌ Clave incorrecta."
+    return True, gr.update(visible=False), gr.update(visible=True), ""
+
+
+def consultar_admin(dni: str, autenticado: bool):
+    """Llena las dos tablas. El estado `autenticado` vive en el servidor, no en el navegador."""
+    if not autenticado:
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    try:
+        texto_c, tabla_c = _tabla(admin.compromisos_pago, dni)
+        texto_m, tabla_m = _tabla(admin.motivos_no_pago, dni)
+    except Exception:
+        logger.exception("No se pudieron consultar los datos de administrador")
+        gr.Warning("No se pudieron consultar los datos (¿base de datos disponible?).")
+        return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+    return texto_c, tabla_c, texto_m, tabla_m
+
+
+def limpiar_busqueda():
+    return ""
+
+
 with gr.Blocks(title="Asistente de cobranzas") as demo:
     gr.Markdown(
         "# Asistente de cobranzas\n"
@@ -110,33 +168,75 @@ with gr.Blocks(title="Asistente de cobranzas") as demo:
         "Cada cliente tiene su propia memoria.",
         elem_id="titulo",
     )
-    with gr.Row(equal_height=False):
-        with gr.Column(scale=1, min_width=300, elem_id="panel-cliente"):
-            cliente = gr.Dropdown(
-                choices=[(c["nombre"], c["id"]) for c in CLIENTES],
-                value=CLIENTES[0]["id"],
-                allow_custom_value=True,
-                label="Cliente (ID de memoria)",
-                info="También puedes escribir un ID nuevo para empezar con memoria en blanco.",
+    autenticado = gr.State(False)
+
+    # ---------------- vista de cliente ----------------
+    with gr.Column(visible=True) as vista_cliente:
+        with gr.Row(elem_classes="fila-vista"):
+            boton_a_admin = gr.Button(
+                "Vista de administrador", size="sm", variant="secondary", scale=0, min_width=200
             )
-            descripcion = gr.Markdown()
-            boton_dni = gr.Button("Escribir saludo con el DNI de prueba")
-            boton_reiniciar = gr.Button("Reiniciar memoria de este cliente", variant="secondary")
-        with gr.Column(scale=3):
-            chatbot = gr.Chatbot(
-                label="Conversación",
-                height=520,
-                placeholder="Elige un cliente y escribe un mensaje para empezar.",
-            )
-            with gr.Row():
-                caja = gr.Textbox(
-                    show_label=False,
-                    container=False,
-                    placeholder="Escribe tu mensaje y presiona Enter",
-                    scale=6,
-                    autofocus=True,
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1, min_width=300, elem_id="panel-cliente"):
+                cliente = gr.Dropdown(
+                    choices=[(c["nombre"], c["id"]) for c in CLIENTES],
+                    value=CLIENTES[0]["id"],
+                    allow_custom_value=True,
+                    label="Cliente (ID de memoria)",
+                    info="También puedes escribir un ID nuevo para empezar con memoria en blanco.",
                 )
-                boton_enviar = gr.Button("Enviar", variant="primary", scale=1)
+                descripcion = gr.Markdown()
+                boton_dni = gr.Button("Escribir saludo con el DNI de prueba")
+                boton_reiniciar = gr.Button("Reiniciar memoria de este cliente", variant="secondary")
+            with gr.Column(scale=3):
+                chatbot = gr.Chatbot(
+                    label="Conversación",
+                    height=520,
+                    # Respaldo: si el modelo igual escribe LaTeX, se dibuja en vez de verse como código.
+                    latex_delimiters=[
+                        {"left": "$$", "right": "$$", "display": True},
+                        {"left": "\\[", "right": "\\]", "display": True},
+                        {"left": "\\(", "right": "\\)", "display": False},
+                    ],
+                    placeholder="Elige un cliente y escribe un mensaje para empezar.",
+                )
+                with gr.Row():
+                    caja = gr.Textbox(
+                        show_label=False,
+                        container=False,
+                        placeholder="Escribe tu mensaje y presiona Enter",
+                        scale=6,
+                        autofocus=True,
+                    )
+                    boton_enviar = gr.Button("Enviar", variant="primary", scale=1)
+
+
+    # ---------------- vista de administrador ----------------
+    with gr.Column(visible=False) as vista_admin:
+        with gr.Row(elem_classes="fila-vista"):
+            boton_a_cliente = gr.Button(
+                "Vista de cliente", size="sm", variant="secondary", scale=0, min_width=200
+            )
+        with gr.Group(visible=True) as login:
+            clave = gr.Textbox(label="Clave de administrador", type="password")
+            boton_entrar = gr.Button("Entrar", variant="primary")
+            mensaje_login = gr.Markdown()
+        with gr.Column(visible=False) as panel_admin:
+            with gr.Row():
+                dni_busqueda = gr.Textbox(
+                    label="Buscar por DNI",
+                    placeholder="Ej.: 10234567 (vacío = todos)",
+                    scale=4,
+                )
+                boton_buscar = gr.Button("Buscar", variant="primary", scale=1)
+                boton_limpiar = gr.Button("Limpiar", scale=1)
+            with gr.Tabs():
+                with gr.Tab("Compromisos de pago"):
+                    conteo_compromisos = gr.Markdown()
+                    tabla_compromisos = gr.Dataframe(interactive=False, wrap=True, max_height=480)
+                with gr.Tab("Motivos de no pago"):
+                    conteo_motivos = gr.Markdown()
+                    tabla_motivos = gr.Dataframe(interactive=False, wrap=True, max_height=480)
 
     cliente.change(cambiar_cliente, cliente, [chatbot, descripcion])
     demo.load(cambiar_cliente, cliente, [chatbot, descripcion])
@@ -147,5 +247,23 @@ with gr.Blocks(title="Asistente de cobranzas") as demo:
 
     boton_dni.click(saludo_con_dni, cliente, caja)
     boton_reiniciar.click(reiniciar_memoria, cliente, chatbot)
+
+    # --- eventos de la vista de administrador ---
+    salidas_tablas = [conteo_compromisos, tabla_compromisos, conteo_motivos, tabla_motivos]
+    boton_a_admin.click(ir_a_admin, None, [vista_cliente, vista_admin])
+    boton_a_cliente.click(
+        volver_a_cliente,
+        None,
+        [vista_cliente, vista_admin, autenticado, login, panel_admin, clave, mensaje_login],
+    )
+    for disparador in (clave.submit, boton_entrar.click):
+        disparador(
+            entrar_admin, clave, [autenticado, login, panel_admin, mensaje_login]
+        ).then(consultar_admin, [dni_busqueda, autenticado], salidas_tablas)
+    for disparador in (dni_busqueda.submit, boton_buscar.click):
+        disparador(consultar_admin, [dni_busqueda, autenticado], salidas_tablas)
+    boton_limpiar.click(limpiar_busqueda, None, dni_busqueda).then(
+        consultar_admin, [dni_busqueda, autenticado], salidas_tablas
+    )
 
 demo.queue(default_concurrency_limit=8)
